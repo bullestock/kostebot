@@ -87,6 +87,8 @@ void app_main()
     std::default_random_engine generator(getCycleCount());
     std::uniform_int_distribution<int> mode_distribution(0, Last-1);
     auto mode = static_cast<Mode>(mode_distribution(generator));
+    if (mode == Quiet)
+        mode = Sine;
     std::uniform_int_distribution<int> duration_distribution(10, 60);
     unsigned long duration = 1000 * duration_distribution(generator);
     std::uniform_int_distribution<int> period_distribution(1, 10);
@@ -95,9 +97,10 @@ void app_main()
 
     printf("mode: %s dur %lu period %lu\n", mode_names[mode], duration, period);
 
-    const int granularity = 100;
-    
+    const int granularity = 10;
+
     auto start_time = millis();
+    double power = 0.0;
     while (1)
     {
         // Check if we should change mode
@@ -112,7 +115,6 @@ void app_main()
             elapsed = 0;
         }
         // Do mode-specific stuff
-        double power = 0.0;
         // Goes from 0 to 1 for each period
         const auto modulus = elapsed % period;
         const auto fraction = static_cast<double>(modulus)/period;
@@ -120,6 +122,7 @@ void app_main()
         switch (mode)
         {
         case Quiet:
+            power = 0.0;
             break;
         case Sine:
             {
@@ -132,9 +135,15 @@ void app_main()
             break;
         case Triangle:
             if (fraction <= 0.5)
+            {
                 power = 2*fraction;
+                DEBUG(("< power x 100 %d\n", static_cast<int>(power*100)));
+            }
             else
+            {
                 power = 1.0 - 2*(fraction - 0.5);
+                DEBUG(("> power x 100 %d\n", static_cast<int>(power*100)));
+            }
             break;
         case Noise:
             if (fraction == 0)
