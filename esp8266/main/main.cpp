@@ -130,8 +130,8 @@ void app_main()
             elapsed = 0;
         }
         // Do mode-specific stuff
-        // Goes from 0 to 1 for each period
         const auto modulus = elapsed % period;
+        // Goes from 0 to 1 for each period
         const auto fraction = static_cast<double>(modulus)/period;
         DEBUG(("elapsed %lu mod %lu fraction (x 100): %d\n", elapsed, modulus, static_cast<int>(fraction*100)));
         switch (mode)
@@ -165,9 +165,20 @@ void app_main()
                 power = bool_distribution(generator);
             break;
         case Sawtooth:
+            power = fraction;
+            break;
         case ReverseSawtooth:
+            power = 1.0 - fraction;
+            break;
         case Sos:
-            mode = Sine;
+            power = 0.0;
+            if ((fraction < 1.0/32.0) ||
+                ((fraction >= 2.0/32.0) && (fraction < 3.0/32.0)) || 
+                ((fraction >= 4.0/32.0) && (fraction < 5.0/32.0)) || 
+                ((fraction >= 8.0/32.0) && (fraction < 13.0/32.0)) || 
+                ((fraction >= 16.0/32.0) && (fraction < 21.0/32.0)) || 
+                ((fraction >= 24.0/32.0) && (fraction < 29.0/32.0)))
+                power = 1.0;
             break;
         case Last:
             printf("Inconceivable!\n");
@@ -193,7 +204,7 @@ void app_main()
         vTaskDelay(granularity / portTICK_RATE_MS);
 
         ++count;
-        if (count > 1000)
+        if (count > 500)
         {
             count = 0;
             uint16_t adc_val = 0;
