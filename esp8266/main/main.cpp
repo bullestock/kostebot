@@ -9,6 +9,7 @@
 #include "esp_system.h"
 #include "esp_spi_flash.h"
 #include "esp_timer.h"
+#include "driver/adc.h"
 #include "driver/gpio.h"
 #include "driver/pwm.h"
 
@@ -26,6 +27,9 @@ enum Mode {
     Square,
     Triangle,
     Noise,
+    Sawtooth,
+    ReverseSawtooth,
+    Sos,
     Last,
 };
 
@@ -35,6 +39,9 @@ const char* mode_names[] = {
     "square",
     "triangle",
     "noise",
+    "sawtooth",
+    "rsawtooth",
+    "sos",
     "last",
 };
 
@@ -55,7 +62,7 @@ uint32_t pwm_duties[] = {
 };
 
 uint32_t pwm_pin_num[] = {
-    2
+    4
 };
 
 float pwm_phases[] = {
@@ -77,13 +84,17 @@ void app_main()
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     //configure GPIO with the given settings
     gpio_config(&io_conf);
-
+    bool led_state = false;
+    
     pwm_init(PWM_PERIOD, pwm_duties, 1, pwm_pin_num);
     pwm_set_phases(pwm_phases);
     pwm_start();
-    
-    int cnt = 0;
 
+    adc_config_t adc_config;
+    adc_config.mode = ADC_READ_TOUT_MODE;
+    adc_config.clk_div = 8; // ADC sample collection clock = 80MHz/clk_div = 10MHz
+    ESP_ERROR_CHECK(adc_init(&adc_config));
+    
     std::default_random_engine generator(getCycleCount());
     std::uniform_int_distribution<int> mode_distribution(0, Last-1);
     auto mode = static_cast<Mode>(mode_distribution(generator));
@@ -101,6 +112,8 @@ void app_main()
 
     auto start_time = millis();
     double power = 0.0;
+    auto last_mode = mode;
+    int count = 0;
     while (1)
     {
         // Check if we should change mode
@@ -108,6 +121,8 @@ void app_main()
         if (elapsed >= duration)
         {
             mode = static_cast<Mode>(mode_distribution(generator));
+            if (last_mode == Quiet && mode == Quiet)
+                mode = Sine;
             duration = 1000 * duration_distribution(generator);
             period = 1000 * period_distribution(generator);
             printf("mode: %s dur %lu period %lu\n", mode_names[mode], duration, period);
@@ -149,6 +164,11 @@ void app_main()
             if (fraction == 0)
                 power = bool_distribution(generator);
             break;
+        case Sawtooth:
+        case ReverseSawtooth:
+        case Sos:
+            mode = Sine;
+            break;
         case Last:
             printf("Inconceivable!\n");
             break;
@@ -171,7 +191,41 @@ void app_main()
             pwm_start();
         }
         vTaskDelay(granularity / portTICK_RATE_MS);
-        gpio_set_level(INTERNAL_LED_PIN, cnt % 2);
-        ++cnt;
+
+        ++count;
+        if (count > 1000)
+        {
+            count = 0;
+            uint16_t adc_val = 0;
+            if (adc_read(&adc_val) != ESP_OK)
+            {
+                printf("HALT: Failed to read battery voltage\n");
+                while (1)
+                {
+                    gpio_set_level(INTERNAL_LED_PIN, 1);
+                    vTaskDelay(500/portTICK_RATE_MS);
+                    gpio_set_level(INTERNAL_LED_PIN, 0);
+                    vTaskDelay(500/portTICK_RATE_MS);
+                }
+            }
+            else
+            {
+                double voltage = adc_val * 0.0303;
+                printf("V %d -> %d mV\n", (int) adc_val, (int) (voltage*1000));
+                if (voltage < 3*2.5)
+                {
+                    printf("HALT: Battery discharged (%d mV)\n", (int) (voltage*1000));
+                    while (1)
+                    {
+                        gpio_set_level(INTERNAL_LED_PIN, 1);
+                        vTaskDelay(100/portTICK_RATE_MS);
+                        gpio_set_level(INTERNAL_LED_PIN, 0);
+                        vTaskDelay(100/portTICK_RATE_MS);
+                    }
+                }
+            }
+            gpio_set_level(INTERNAL_LED_PIN, led_state);
+            led_state = !led_state;
+        }
     }
 }
