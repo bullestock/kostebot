@@ -13,10 +13,13 @@
 #include "driver/gpio.h"
 #include "driver/pwm.h"
 
-#define INTERNAL_LED_PIN (gpio_num_t) 2
+static const auto INTERNAL_LED_PIN = (gpio_num_t) 2;
 
 // PWM period 1000us(1Khz), same as depth
-#define PWM_PERIOD    (1000)
+static const auto PWM_PERIOD = 1000;
+
+static const auto MINIMUM_VOLTAGE = 8.5;
+
 
 #define DEBUG(x)
 //#define DEBUG(x) printf x
@@ -223,9 +226,10 @@ void app_main()
             {
                 double voltage = adc_val * 0.0303;
                 printf("V %d -> %d mV\n", (int) adc_val, (int) (voltage*1000));
-                if (voltage < 3*2.5)
+                if (voltage < MINIMUM_VOLTAGE)
                 {
                     printf("HALT: Battery discharged (%d mV)\n", (int) (voltage*1000));
+                    pwm_stop(0);
                     while (1)
                     {
                         gpio_set_level(INTERNAL_LED_PIN, 1);
