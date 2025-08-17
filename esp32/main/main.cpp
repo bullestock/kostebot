@@ -80,10 +80,15 @@ void app_main()
     auto mode = static_cast<Mode>(mode_distribution(generator));
     if (mode == Quiet)
         mode = Sine;
+
     std::uniform_int_distribution<int> duration_distribution(10, 60);
     unsigned long duration = 1000 * duration_distribution(generator);
+        
     std::uniform_int_distribution<int> period_distribution(1, 10);
     unsigned long period = 1000 * period_distribution(generator);
+    if (mode == VetinarisClock)
+        period *= 3;
+    
     std::uniform_int_distribution<int> bool_distribution(0, 1);
 
     printf("mode: %s dur %lu period %lu\n", mode_names[mode], duration, period);
@@ -93,6 +98,8 @@ void app_main()
     auto start_time = millis();
     double power = 0.0;
     auto last_mode = mode;
+    double vetinari_threshold = 0.5;
+    bool vetinari_first = true;
     while (1)
     {
         // Check if we should change mode
@@ -160,6 +167,20 @@ void app_main()
                 power = 1.0;
             break;
         case VetinarisClock:
+            if (vetinari_first)
+            {
+                power = 0.0;
+                if (fraction >= vetinari_threshold)
+                {
+                    vetinari_first = false;
+                    power = 1.0;
+                    std::uniform_real_distribution<float> d(0.4, 0.6);
+                    vetinari_threshold = d(generator);
+                    printf("Next threshold %.2f\n", vetinari_threshold);
+                }
+            }
+            else if (fraction == 0.0)
+                vetinari_first = true;
             break;
         case Last:
             printf("Inconceivable!\n");
