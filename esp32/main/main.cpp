@@ -14,15 +14,29 @@
 #define DEBUG(x)
 //#define DEBUG(x) printf x
 
+constexpr const gpio_num_t PIN_MOTOR = (gpio_num_t) 2;
+constexpr const gpio_num_t PIN_B1 = (gpio_num_t) 27;
+constexpr const gpio_num_t PIN_B2 = (gpio_num_t) 25;
+constexpr const gpio_num_t PIN_B3 = (gpio_num_t) 32;
+
 enum Mode {
+    // Off
     Quiet,
+    // Sine wave
     Sine,
+    // Square wave, random duty cycle
     Square,
+    // Triangle
     Triangle,
+    // Randomly switches between 0 and 1
     Noise,
+    // Ramps from 0 to 1, then repeats
     Sawtooth,
+    // Ramps from 1 to 0, then repeats
     ReverseSawtooth,
+    // - - - . . . - - -
     Sos,
+    // Like Square, but the transition is a little bit too early or too late
     VetinarisClock,
     Last,
 };
@@ -55,6 +69,17 @@ static inline uint32_t getCycleCount()
 extern "C"
 void app_main()
 {
+    gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask =
+        (1ULL << PIN_B1) |
+        (1ULL << PIN_B2) |
+        (1ULL << PIN_B3);
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&io_conf);
+
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_8_BIT,
@@ -65,7 +90,7 @@ void app_main()
     ledc_timer_config(&ledc_timer);
 
     ledc_channel_config_t pwm_channel = {
-        .gpio_num = 2,
+        .gpio_num = PIN_MOTOR,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LEDC_CHANNEL_0,
         .intr_type = LEDC_INTR_DISABLE,
@@ -98,22 +123,59 @@ void app_main()
     auto start_time = millis();
     double power = 0.0;
     auto last_mode = mode;
-    double vetinari_threshold = 0.5;
+    double threshold = 0.5;
     bool vetinari_first = true;
+    double max_power = 1.0;
+    auto last_key = start_time;
     while (1)
     {
+        bool next = false;
+        bool up = false;
+        bool down = false;
+
+        if (millis() - last_key > 500)
+        {
+            next = !gpio_get_level(PIN_B1);
+            up = !gpio_get_level(PIN_B2);
+            down = !gpio_get_level(PIN_B3);
+            //printf("next %d up %d down %d\n", next, up, down);
+            last_key = millis();
+        }
+
         // Check if we should change mode
         auto elapsed = (millis() - start_time + granularity - 1)/granularity*granularity;
-        if (elapsed >= duration)
+        if (next || elapsed >= duration)
         {
-            mode = static_cast<Mode>(mode_distribution(generator));
-            if (last_mode == Quiet && mode == Quiet)
-                mode = Sine;
+            while (mode == last_mode)
+                mode = static_cast<Mode>(mode_distribution(generator));
+        }
+
+        if (up)
+        {
+            max_power += 0.1;
+            if (max_power > 1.0)
+                max_power = 1.0;
+            printf("Power %.1f\n", max_power);
+        }
+        else if (down)
+        {
+            max_power -= 0.1;
+            if (max_power < 0.1)
+                max_power = 0.0;
+            printf("Power %.1f\n", max_power);
+        }
+
+        if (mode != last_mode)
+        {
+            std::uniform_real_distribution<float> d(0.1, 0.9);
+            threshold = d(generator);
             duration = 1000 * duration_distribution(generator);
             period = 1000 * period_distribution(generator);
-            printf("mode: %s dur %lu period %lu\n", mode_names[mode], duration, period);
+            printf("mode: %s dur %lu period %lu threshold %.1f\n",
+                   mode_names[mode], duration, period, threshold);
             start_time = millis();
             elapsed = 0;
+            last_mode = mode;
         }
         // Do mode-specific stuff
         const auto modulus = elapsed % period;
@@ -132,7 +194,7 @@ void app_main()
             }
             break;
         case Square:
-            power = fraction >= 0.5 ? 1.0 : 0.0;
+            power = fraction >= threshold ? 1.0 : 0.0;
             break;
         case Triangle:
             if (fraction <= 0.5)
@@ -170,13 +232,13 @@ void app_main()
             if (vetinari_first)
             {
                 power = 0.0;
-                if (fraction >= vetinari_threshold)
+                if (fraction >= threshold)
                 {
                     vetinari_first = false;
                     power = 1.0;
                     std::uniform_real_distribution<float> d(0.4, 0.6);
-                    vetinari_threshold = d(generator);
-                    printf("Next threshold %.2f\n", vetinari_threshold);
+                    threshold = d(generator);
+                    printf("Next threshold %.2f\n", threshold);
                 }
             }
             else if (fraction == 0.0)
@@ -195,7 +257,7 @@ void app_main()
                 vTaskDelay(granularity / portTICK_PERIOD_MS);
         }
 
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, power*255);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, power*max_power*255);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 
         vTaskDelay(granularity / portTICK_PERIOD_MS);
